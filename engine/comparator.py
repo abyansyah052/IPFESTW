@@ -3,7 +3,8 @@ Scenario Comparison and Ranking Engine
 """
 from typing import List, Dict
 import pandas as pd
-from database.models import Scenario, ScenarioMetrics, ScenarioComparison, ComparisonScenario
+from sqlalchemy import func
+from database.models import Scenario, ScenarioMetrics, ScenarioComparison, ComparisonScenario, CalculationResult
 
 class ScenarioComparator:
     """
@@ -15,7 +16,7 @@ class ScenarioComparator:
     
     def get_scenario_metrics_df(self, scenario_ids: List[int]) -> pd.DataFrame:
         """
-        Get scenario metrics as a DataFrame
+        Get scenario metrics as a DataFrame using optimized batch query
         
         Args:
             scenario_ids: List of scenario IDs to compare
@@ -23,25 +24,40 @@ class ScenarioComparator:
         Returns:
             DataFrame with scenario metrics
         """
+        # OPTIMIZED: Single batch query with JOIN instead of N+1 queries
+        results = self.session.query(
+            Scenario.id,
+            Scenario.name,
+            ScenarioMetrics.total_capex,
+            ScenarioMetrics.total_opex,
+            ScenarioMetrics.total_revenue,
+            ScenarioMetrics.total_contractor_share,
+            ScenarioMetrics.total_government_take,
+            ScenarioMetrics.npv,
+            ScenarioMetrics.irr,
+            ScenarioMetrics.payback_period_years,
+            ScenarioMetrics.asr_amount
+        ).join(
+            ScenarioMetrics, Scenario.id == ScenarioMetrics.scenario_id
+        ).filter(
+            Scenario.id.in_(scenario_ids)
+        ).all()
+        
         scenarios = []
-        for scenario_id in scenario_ids:
-            scenario = self.session.query(Scenario).filter_by(id=scenario_id).first()
-            metrics = self.session.query(ScenarioMetrics).filter_by(scenario_id=scenario_id).first()
-            
-            if scenario and metrics:
-                scenarios.append({
-                    'scenario_id': scenario.id,
-                    'scenario_name': scenario.name,
-                    'total_capex': metrics.total_capex,
-                    'total_opex': metrics.total_opex,
-                    'total_revenue': metrics.total_revenue,
-                    'total_contractor_share': metrics.total_contractor_share,
-                    'total_government_take': metrics.total_government_take,
-                    'npv': metrics.npv,
-                    'irr': metrics.irr,
-                    'payback_period': metrics.payback_period_years,
-                    'asr_amount': metrics.asr_amount
-                })
+        for r in results:
+            scenarios.append({
+                'scenario_id': r[0],
+                'scenario_name': r[1],
+                'total_capex': r[2],
+                'total_opex': r[3],
+                'total_revenue': r[4],
+                'total_contractor_share': r[5],
+                'total_government_take': r[6],
+                'npv': r[7],
+                'irr': r[8],
+                'payback_period': r[9],
+                'asr_amount': r[10]
+            })
         
         return pd.DataFrame(scenarios)
     

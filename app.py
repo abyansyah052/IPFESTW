@@ -594,7 +594,7 @@ def display_scenario_results(scenario_id):
 
 def compare_scenarios_page():
     """Scenario comparison page with bulk compare support"""
-    st.title("📊 Compare Scenarios")
+    st.title("Compare Scenarios")
     
     with get_db_session() as session:
         from sqlalchemy import func
@@ -606,7 +606,7 @@ def compare_scenarios_page():
             return
         
         # Bulk selection options
-        st.subheader("🎯 Select Scenarios to Compare")
+        st.subheader("Select Scenarios to Compare")
         
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -620,7 +620,7 @@ def compare_scenarios_page():
         
         if select_mode == "Select All":
             selected_scenarios = scenarios
-            st.success(f"✅ All **{len(scenarios)}** scenarios selected")
+            st.success(f"All {len(scenarios)} scenarios selected")
             
         elif select_mode == "Select Range":
             col_a, col_b = st.columns(2)
@@ -641,13 +641,13 @@ def compare_scenarios_page():
             
             if start_idx <= end_idx:
                 selected_scenarios = scenarios[start_idx-1:end_idx]
-                st.success(f"✅ **{len(selected_scenarios)}** scenarios selected (#{start_idx} to #{end_idx})")
+                st.success(f"{len(selected_scenarios)} scenarios selected (#{start_idx} to #{end_idx})")
             else:
                 st.error("Start must be <= End")
                 
         else:  # Manual Select
             # Quick filter
-            filter_text = st.text_input("🔍 Filter scenarios by name", "")
+            filter_text = st.text_input("Filter scenarios by name", "")
             
             filtered_scenarios = scenarios
             if filter_text:
@@ -688,39 +688,71 @@ def compare_scenarios_page():
         st.divider()
         
         # Run comparison
-        if st.button("🔄 Run Comparison", type="primary"):
+        if st.button("Run Comparison", type="primary"):
             st.session_state.run_comparison = True
         
         if st.session_state.get('run_comparison', False) or select_mode in ["Select All", "Select Range"]:
-            st.subheader(f"📈 Comparison Results ({len(selected_scenarios)} scenarios)")
+            st.subheader(f"Comparison Results ({len(selected_scenarios)} scenarios)")
             
-            # Collect metrics for all selected scenarios
+            # OPTIMIZED: Batch query instead of N+1 queries
+            progress_bar = st.progress(0, text="Loading scenarios...")
+            
+            selected_ids = [s.id for s in selected_scenarios]
+            
+            # Single batch query for all metrics using JOIN
+            progress_bar.progress(20, text="Fetching metrics...")
+            metrics_results = session.query(
+                Scenario.id,
+                Scenario.name,
+                ScenarioMetrics.npv,
+                ScenarioMetrics.irr,
+                ScenarioMetrics.payback_period_years,
+                ScenarioMetrics.total_revenue,
+                ScenarioMetrics.total_contractor_share,
+                ScenarioMetrics.total_government_take,
+                ScenarioMetrics.total_capex,
+                ScenarioMetrics.total_opex
+            ).join(
+                ScenarioMetrics, Scenario.id == ScenarioMetrics.scenario_id
+            ).filter(
+                Scenario.id.in_(selected_ids)
+            ).all()
+            
+            progress_bar.progress(60, text="Calculating PTCF...")
+            
+            # Batch query for PTCF (sum of contractor_tax per scenario)
+            ptcf_results = session.query(
+                CalculationResult.scenario_id,
+                func.sum(CalculationResult.contractor_tax)
+            ).filter(
+                CalculationResult.scenario_id.in_(selected_ids),
+                CalculationResult.contractor_tax > 0
+            ).group_by(CalculationResult.scenario_id).all()
+            
+            ptcf_dict = {r[0]: r[1] for r in ptcf_results}
+            
+            progress_bar.progress(90, text="Building comparison table...")
+            
+            # Build comparison data
             comparison_data = []
+            for r in metrics_results:
+                scenario_id = r[0]
+                comparison_data.append({
+                    'ID': scenario_id,
+                    'Scenario': r[1][:50] + "..." if len(r[1]) > 50 else r[1],
+                    'NPV (13%)': r[2],
+                    'IRR (%)': r[3] * 100 if r[3] else None,
+                    'Payback (years)': r[4],
+                    'Gross Revenue': r[5],
+                    'Contractor Take': r[6],
+                    'Gov Take': r[7],
+                    'Contractor PTCF': ptcf_dict.get(scenario_id, 0),
+                    'Total CAPEX': r[8],
+                    'Total OPEX': r[9]
+                })
             
-            with st.spinner(f"Loading {len(selected_scenarios)} scenarios..."):
-                for scenario in selected_scenarios:
-                    metrics = session.query(ScenarioMetrics).filter_by(scenario_id=scenario.id).first()
-                    
-                    # Get PTCF (sum of contractor tax)
-                    ptcf = session.query(func.sum(CalculationResult.contractor_tax)).filter(
-                        CalculationResult.scenario_id == scenario.id,
-                        CalculationResult.contractor_tax > 0
-                    ).scalar() or 0
-                    
-                    if metrics:
-                        comparison_data.append({
-                            'ID': scenario.id,
-                            'Scenario': scenario.name[:50] + "..." if len(scenario.name) > 50 else scenario.name,
-                            'NPV (13%)': metrics.npv,
-                            'IRR (%)': metrics.irr * 100 if metrics.irr else None,
-                            'Payback (years)': metrics.payback_period_years,
-                            'Gross Revenue': metrics.total_revenue,
-                            'Contractor Take': metrics.total_contractor_share,
-                            'Gov Take': metrics.total_government_take,
-                            'Contractor PTCF': ptcf,
-                            'Total CAPEX': metrics.total_capex,
-                            'Total OPEX': metrics.total_opex
-                        })
+            progress_bar.progress(100, text="Done!")
+            progress_bar.empty()
             
             if not comparison_data:
                 st.warning("No metrics found for selected scenarios. Please recalculate them.")
@@ -729,38 +761,29 @@ def compare_scenarios_page():
             df = pd.DataFrame(comparison_data)
             
             # Summary stats
-            st.markdown("### 📊 Summary Statistics")
+            st.markdown("### Summary Statistics")
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 best_npv = df.loc[df['NPV (13%)'].idxmax()]
-                st.metric("🏆 Best NPV", f"${best_npv['NPV (13%)']:,.0f}", f"ID: {int(best_npv['ID'])}")
+                st.metric("Best NPV", f"${best_npv['NPV (13%)']:,.0f}", f"ID: {int(best_npv['ID'])}")
             with col2:
                 if df['IRR (%)'].notna().any():
                     best_irr = df.loc[df['IRR (%)'].idxmax()]
-                    st.metric("📈 Best IRR", f"{best_irr['IRR (%)']:.2f}%", f"ID: {int(best_irr['ID'])}")
+                    st.metric("Best IRR", f"{best_irr['IRR (%)']:.2f}%", f"ID: {int(best_irr['ID'])}")
                 else:
-                    st.metric("📈 Best IRR", "N/A")
+                    st.metric("Best IRR", "N/A")
             with col3:
                 positive_npv = len(df[df['NPV (13%)'] > 0])
-                st.metric("✅ Positive NPV", f"{positive_npv}/{len(df)}", f"{positive_npv/len(df)*100:.1f}%")
+                st.metric("Positive NPV", f"{positive_npv}/{len(df)}", f"{positive_npv/len(df)*100:.1f}%")
             with col4:
                 avg_payback = df['Payback (years)'].mean()
-                st.metric("⏱️ Avg Payback", f"{avg_payback:.2f} yrs" if pd.notna(avg_payback) else "N/A")
+                st.metric("Avg Payback", f"{avg_payback:.2f} yrs" if pd.notna(avg_payback) else "N/A")
             
-            # Sorting options
-            st.markdown("### 📋 Detailed Comparison")
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                sort_by = st.selectbox(
-                    "Sort by",
-                    ['NPV (13%)', 'IRR (%)', 'Payback (years)', 'Gross Revenue', 'Contractor Take', 'Gov Take', 'ID'],
-                    index=0
-                )
-            with col2:
-                sort_order = st.radio("Order", ["Descending", "Ascending"], horizontal=True)
+            # Detailed Comparison - sorted by NPV descending (no user sort options)
+            st.markdown("### Detailed Comparison")
             
-            ascending = sort_order == "Ascending"
-            df_sorted = df.sort_values(by=sort_by, ascending=ascending, na_position='last')
+            # Sort by NPV descending by default
+            df_sorted = df.sort_values(by='NPV (13%)', ascending=False, na_position='last')
             
             # Format for display
             df_display = df_sorted.copy()
@@ -775,7 +798,7 @@ def compare_scenarios_page():
             st.dataframe(df_display, use_container_width=True, hide_index=True)
             
             # Charts for bulk comparison
-            st.markdown("### 📈 Visual Comparison")
+            st.markdown("### Visual Comparison")
             
             tab1, tab2, tab3 = st.tabs(["NPV Distribution", "Top/Bottom Performers", "Scatter Plot"])
             
@@ -827,14 +850,14 @@ def compare_scenarios_page():
                 st.plotly_chart(fig_scatter, use_container_width=True)
             
             # Export
-            st.markdown("### 📥 Export Comparison")
+            st.markdown("### Export Comparison")
             
             col1, col2 = st.columns(2)
             with col1:
                 # CSV export
                 csv_data = df_sorted.to_csv(index=False)
                 st.download_button(
-                    "📄 Download CSV",
+                    "Download CSV",
                     csv_data,
                     f"comparison_{len(selected_scenarios)}_scenarios.csv",
                     "text/csv",
@@ -850,7 +873,7 @@ def compare_scenarios_page():
                 output.seek(0)
                 filename = generate_filename(f"comparison_{len(selected_scenarios)}_scenarios")
                 st.download_button(
-                    label="📥 Download Excel Report",
+                    label="Download Excel Report",
                     data=output,
                     file_name=filename,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -862,7 +885,7 @@ def compare_scenarios_page():
             # LEADERBOARD TOP 100 WITH SCORING
             # ============================================
             st.markdown("---")
-            st.markdown("### 🏆 Scenario Leaderboard (Top 100)")
+            st.markdown("### Scenario Leaderboard (Top 100)")
             st.caption("""
             **Scoring Weights:** NPV (30%) | Contractor Share (25%) | IRR (15%) | Payback Period (10%) | CAPEX (10%) | OPEX (10%)
             """)
@@ -870,8 +893,11 @@ def compare_scenarios_page():
             # Use comparator for scoring
             comparator = ScenarioComparator(session)
             
-            with st.spinner("Calculating scores for leaderboard..."):
-                ranked = comparator.rank_scenarios(selected_ids)
+            # Progress bar for leaderboard calculation
+            lb_progress = st.progress(0, text="Calculating leaderboard scores...")
+            ranked = comparator.rank_scenarios(selected_ids)
+            lb_progress.progress(100, text="Leaderboard calculation complete!")
+            lb_progress.empty()
             
             if ranked:
                 # Limit to top 100
@@ -936,31 +962,31 @@ def compare_scenarios_page():
                     use_container_width=True,
                     hide_index=True,
                     column_config={
-                        "Rank": st.column_config.NumberColumn("🏅 Rank", width="small"),
-                        "Score": st.column_config.TextColumn("📊 Score", width="small"),
-                        "Scenario": st.column_config.TextColumn("📋 Scenario", width="large"),
-                        "NPV": st.column_config.TextColumn("💰 NPV", width="medium"),
-                        "IRR (%)": st.column_config.TextColumn("📈 IRR", width="small"),
-                        "Payback": st.column_config.TextColumn("⏱️ Payback", width="small"),
+                        "Rank": st.column_config.NumberColumn("Rank", width="small"),
+                        "Score": st.column_config.TextColumn("Score", width="small"),
+                        "Scenario": st.column_config.TextColumn("Scenario", width="large"),
+                        "NPV": st.column_config.TextColumn("NPV", width="medium"),
+                        "IRR (%)": st.column_config.TextColumn("IRR", width="small"),
+                        "Payback": st.column_config.TextColumn("Payback", width="small"),
                     }
                 )
                 
                 # Quick navigation buttons
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    if st.button("⏮️ First", disabled=(page_num == 1), key="lb_first"):
+                    if st.button("<< First", disabled=(page_num == 1), key="lb_first"):
                         st.session_state.leaderboard_page = 1
                         st.rerun()
                 with col2:
-                    if st.button("◀️ Prev", disabled=(page_num == 1), key="lb_prev"):
+                    if st.button("< Prev", disabled=(page_num == 1), key="lb_prev"):
                         st.session_state.leaderboard_page = page_num - 1
                         st.rerun()
                 with col3:
-                    if st.button("Next ▶️", disabled=(page_num == total_pages), key="lb_next"):
+                    if st.button("Next >", disabled=(page_num == total_pages), key="lb_next"):
                         st.session_state.leaderboard_page = page_num + 1
                         st.rerun()
                 with col4:
-                    if st.button("Last ⏭️", disabled=(page_num == total_pages), key="lb_last"):
+                    if st.button("Last >>", disabled=(page_num == total_pages), key="lb_last"):
                         st.session_state.leaderboard_page = total_pages
                         st.rerun()
                 
@@ -968,13 +994,13 @@ def compare_scenarios_page():
                 if page_num == 1 and top_100:
                     best = top_100[0]
                     st.success(f"""
-                    🥇 **BEST SCENARIO: {best['scenario_name']}**
+                    **BEST SCENARIO: {best['scenario_name']}**
                     
                     Score: **{best['total_score']:.2f}/100** | NPV: **${best['npv']:,.0f}** | IRR: **{best.get('irr', 0)*100:.2f}%** | Payback: **{best.get('payback_period', 0):.2f} years**
                     """)
                 
                 # Export leaderboard
-                st.markdown("#### 📥 Export Leaderboard")
+                st.markdown("#### Export Leaderboard")
                 leaderboard_full = []
                 for r in top_100:
                     irr_val = r.get('irr') * 100 if r.get('irr') else None
@@ -992,7 +1018,7 @@ def compare_scenarios_page():
                 lb_export_df = pd.DataFrame(leaderboard_full)
                 csv_lb = lb_export_df.to_csv(index=False)
                 st.download_button(
-                    "📄 Download Top 100 Leaderboard (CSV)",
+                    "Download Top 100 Leaderboard (CSV)",
                     csv_lb,
                     "leaderboard_top_100.csv",
                     "text/csv",

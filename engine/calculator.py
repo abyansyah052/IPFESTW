@@ -402,12 +402,15 @@ class FinancialCalculator:
             else:
                 psc_split = self.calculate_psc_split(available_for_split)
             
-            # 11. Annual Cash Flow = Available for Split (Revenue - Total Cost)
-            annual_cf = available_for_split
+            # 11. Annual Cash Flow for IRR/NPV
+            # Cash Flow = Revenue - OPEX - CAPEX (actual cash movement)
+            # Note: Depreciation is NON-CASH, so not included in cash flow
+            # ASR is actual cash reserve, so included
+            annual_cf = total_rev - year_opex - year_capex - year_asr
             
             # 12. Cumulative Cash Flow
             cumulative_cf += annual_cf
-            cash_flows.append(cumulative_cf)  # Use cumulative for NPV/IRR
+            cash_flows.append(annual_cf)  # Use ANNUAL cash flow for NPV/IRR
             
             # Store result
             result = CalculationResult(
@@ -432,13 +435,12 @@ class FinancialCalculator:
             )
             results.append(result)
         
-        # Calculate NPV at 13%
+        # Calculate NPV at 13% using ANNUAL cash flows
         npv = self.calculate_npv(cash_flows, self.fiscal_terms.discount_rate)
         
-        # Calculate IRR using CUMULATIVE cash flows (as per Excel formula)
-        # Excel: =IRR(J33:U33, 20%) where J33:U33 contains cumulative CF
-        cumulative_cash_flows = [r.cumulative_cash_flow for r in results]
-        irr = self.calculate_irr(cumulative_cash_flows)
+        # Calculate IRR using ANNUAL cash flows (not cumulative!)
+        # IRR is the discount rate that makes NPV of annual cash flows = 0
+        irr = self.calculate_irr(cash_flows)
         
         # Calculate Payback Period
         payback_period = self.calculate_payback_period(results)
