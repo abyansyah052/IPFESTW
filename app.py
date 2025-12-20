@@ -76,6 +76,10 @@ if 'selected_capex' not in st.session_state:
     st.session_state.selected_capex = {}
 if 'scenarios_list' not in st.session_state:
     st.session_state.scenarios_list = []
+if 'comparison_data' not in st.session_state:
+    st.session_state.comparison_data = None
+if 'scenarios_page' not in st.session_state:
+    st.session_state.scenarios_page = 0
 
 @st.cache_data(ttl=300)
 def get_categories_cached():
@@ -94,6 +98,46 @@ def get_items_for_category_cached(category_id):
         return [(item.id, item.code, item.name, item.unit, item.unit_cost, 
                  item.subcategory.name if item.subcategory else "General")
                 for item in items]
+
+@st.cache_data(ttl=60)
+def get_scenarios_list_cached(page: int = 0, per_page: int = 50):
+    """Cached paginated query for scenarios - optimized for hundreds of scenarios"""
+    with get_db_session() as session:
+        total = session.query(Scenario).filter_by(is_active=True).count()
+        scenarios = session.query(Scenario).filter_by(is_active=True)\
+            .order_by(Scenario.created_at.desc())\
+            .offset(page * per_page).limit(per_page).all()
+        return {
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total + per_page - 1) // per_page,
+            'scenarios': [(s.id, s.name, s.description, s.created_at) for s in scenarios]
+        }
+
+@st.cache_data(ttl=60)
+def get_scenario_metrics_cached(scenario_id: int):
+    """Cached query for scenario metrics"""
+    with get_db_session() as session:
+        from sqlalchemy import text
+        metrics = session.query(ScenarioMetrics).filter_by(scenario_id=scenario_id).first()
+        if metrics:
+            ptcf = session.execute(text(
+                'SELECT SUM(contractor_tax) FROM calculation_results WHERE scenario_id = :sid'
+            ), {'sid': scenario_id}).fetchone()[0] or 0
+            return {
+                'npv': float(metrics.npv) if metrics.npv else 0,
+                'irr': float(metrics.irr) if metrics.irr else 0,
+                'payback': float(metrics.payback_period_years) if metrics.payback_period_years else 0,
+                'total_revenue': float(metrics.total_revenue) if metrics.total_revenue else 0,
+                'total_capex': float(metrics.total_capex) if metrics.total_capex else 0,
+                'total_opex': float(metrics.total_opex) if metrics.total_opex else 0,
+                'contractor_share': float(metrics.total_contractor_share) if metrics.total_contractor_share else 0,
+                'government_take': float(metrics.total_government_take) if metrics.total_government_take else 0,
+                'asr': float(metrics.asr_amount) if metrics.asr_amount else 0,
+                'contractor_ptcf': float(ptcf)
+            }
+        return None
 
 def initialize_default_data(session):
     """Initialize default fiscal terms, pricing, and production profile if not exists"""
@@ -356,30 +400,56 @@ def display_scenario_results(scenario_id):
             st.warning("No calculation results available. Please calculate first.")
             return
         
-        # Display key metrics
+        # Get Contractor PTCF (total tax paid)
+        from sqlalchemy import text
+        ptcf_result = session.execute(text(
+            'SELECT SUM(contractor_tax) FROM calculation_results WHERE scenario_id = :sid'
+        ), {'sid': scenario_id}).fetchone()
+        contractor_ptcf = float(ptcf_result[0]) if ptcf_result[0] else 0
+        
+        # Display key metrics - Row 1
+        st.markdown("### 📊 Key Financial Metrics")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("Total CAPEX", f"${metrics.total_capex:,.0f}")
-        with col2:
-            st.metric("Total OPEX", f"${metrics.total_opex:,.0f}")
-        with col3:
-            st.metric("Total Revenue", f"${metrics.total_revenue:,.0f}")
-        with col4:
             npv_color = "normal" if metrics.npv > 0 else "inverse"
             st.metric("NPV (13%)", f"${metrics.npv:,.0f}", delta_color=npv_color)
+        with col2:
+            irr_val = metrics.irr * 100 if metrics.irr else 0
+            irr_color = "normal" if irr_val > 0 else "inverse"
+            st.metric("IRR", f"{irr_val:.2f}%", delta_color=irr_color)
+        with col3:
+            payback = metrics.payback_period_years if metrics.payback_period_years else 0
+            st.metric("Payback Period", f"{payback:.3f} years")
+        with col4:
+            st.metric("Gross Revenue", f"${metrics.total_revenue:,.0f}")
         
+        # Row 2 - Contractor & Government
         col5, col6, col7, col8 = st.columns(4)
         
         with col5:
-            st.metric("Contractor Share", f"${metrics.total_contractor_share:,.0f}")
+            st.metric("Contractor Take", f"${metrics.total_contractor_share:,.0f}")
         with col6:
             st.metric("Government Take", f"${metrics.total_government_take:,.0f}")
         with col7:
-            st.metric("ASR (5%)", f"${metrics.asr_amount:,.0f}")
+            st.metric("Contractor PTCF (Tax)", f"${contractor_ptcf:,.0f}")
         with col8:
             roi = ((metrics.total_contractor_share - metrics.total_capex) / metrics.total_capex * 100) if metrics.total_capex > 0 else 0
             st.metric("ROI", f"{roi:.2f}%")
+        
+        # Row 3 - Investment Details
+        col9, col10, col11, col12 = st.columns(4)
+        
+        with col9:
+            st.metric("Total CAPEX", f"${metrics.total_capex:,.0f}")
+        with col10:
+            st.metric("Total OPEX", f"${metrics.total_opex:,.0f}")
+        with col11:
+            st.metric("ASR (5%)", f"${metrics.asr_amount:,.0f}")
+        with col12:
+            # Profit margin
+            profit_margin = (metrics.total_contractor_share / metrics.total_revenue * 100) if metrics.total_revenue > 0 else 0
+            st.metric("Profit Margin", f"{profit_margin:.2f}%")
         
         # Tabs for detailed results
         tab1, tab2, tab3, tab4 = st.tabs(["Annual Results", "CAPEX/OPEX", "Visualizations", "Summary"])
@@ -459,7 +529,7 @@ def display_scenario_results(scenario_id):
                 barmode='group',
                 height=400
             )
-            st.plotly_chart(fig1, use_container_width=True)
+            st.plotly_chart(fig1, width="stretch")
             
             # Cumulative Cash Flow
             fig2 = go.Figure()
@@ -476,7 +546,7 @@ def display_scenario_results(scenario_id):
                 yaxis_title='USD',
                 height=400
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width="stretch")
             
             # PSC Split
             total_contractor = sum(r.contractor_share_aftertax for r in results)
@@ -488,7 +558,7 @@ def display_scenario_results(scenario_id):
                 hole=.3
             )])
             fig3.update_layout(title='Production Sharing Split', height=400)
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width="stretch")
         
         with tab4:
             st.subheader("Scenario Summary Report")
@@ -600,7 +670,7 @@ def compare_scenarios_page():
                     color='NPV',
                     color_continuous_scale='RdYlGn'
                 )
-                st.plotly_chart(fig1, use_container_width=True)  # TODO: Update to width='stretch' when Streamlit updates plotly
+                st.plotly_chart(fig1, width="stretch")  # TODO: Update to width='stretch' when Streamlit updates plotly
             
             with col2:
                 # Score Comparison
@@ -612,7 +682,7 @@ def compare_scenarios_page():
                     color='Score',
                     color_continuous_scale='Blues'
                 )
-                st.plotly_chart(fig2, use_container_width=True)  # TODO: Update to width='stretch' when Streamlit updates plotly
+                st.plotly_chart(fig2, width="stretch")  # TODO: Update to width='stretch' when Streamlit updates plotly
             
             # CAPEX vs Revenue
             fig3 = go.Figure()
@@ -624,23 +694,24 @@ def compare_scenarios_page():
                 barmode='group',
                 height=400
             )
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width="stretch")
             
-            # Export comparison
-            if st.button("Export Comparison to Excel", key="export_comparison_btn"):
-                from io import BytesIO
-                output = BytesIO()
-                exporter = ExcelExporter(session)
-                exporter.export_comparison(selected_ids, output)
-                output.seek(0)
-                filename = generate_filename("scenario_comparison")
-                st.download_button(
-                    label="Download Comparison Excel",
-                    data=output,
-                    file_name=filename,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="download_comparison_btn"
-                )
+            # Export comparison - generate data immediately for download
+            st.markdown("### 📥 Export")
+            from io import BytesIO
+            output = BytesIO()
+            exporter = ExcelExporter(session)
+            exporter.export_comparison(selected_ids, output)
+            output.seek(0)
+            filename = generate_filename("scenario_comparison")
+            st.download_button(
+                label="📥 Download Comparison Excel",
+                data=output,
+                file_name=filename,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_comparison_btn",
+                type="primary"
+            )
 
 def main():
     """Main application"""
@@ -657,8 +728,8 @@ def main():
         
         page = st.radio(
             "Select Page",
-            ["Home", "Create Scenario", "View Scenarios", "Manage Scenarios", "Compare Scenarios", "About"],
-            index=["Home", "Create Scenario", "View Scenarios", "Manage Scenarios", "Compare Scenarios", "About"].index(default_page) if default_page in ["Home", "Create Scenario", "View Scenarios", "Manage Scenarios", "Compare Scenarios", "About"] else 0,
+            ["Home", "Create Scenario", "Bulk Import", "View Scenarios", "Manage Scenarios", "Compare Scenarios", "About"],
+            index=["Home", "Create Scenario", "Bulk Import", "View Scenarios", "Manage Scenarios", "Compare Scenarios", "About"].index(default_page) if default_page in ["Home", "Create Scenario", "Bulk Import", "View Scenarios", "Manage Scenarios", "Compare Scenarios", "About"] else 0,
             label_visibility="collapsed"
         )
     
@@ -787,6 +858,207 @@ def main():
         
         elif not selected_items:
             st.info("Please select CAPEX items to continue.")
+    
+    elif page == "Bulk Import":
+        st.title("📥 Bulk Import Scenarios")
+        st.markdown("""
+        Import multiple scenarios from an Excel file. The system will automatically:
+        - Parse CAPEX selections from Excel
+        - Generate OPEX for each scenario
+        - Calculate all financial metrics (NPV, IRR, Payback, etc.)
+        """)
+        
+        # Download template button
+        with st.expander("📄 Download Excel Template", expanded=False):
+            st.markdown("""
+            **Excel Format (sesuai 512_scenarios.xlsx):**
+            
+            | Scenario ID | Production | Power | Transportation | Flaring |
+            |-------------|------------|-------|----------------|---------|
+            | 1 | | | Pipeline | FGRS ON |
+            | 2 | CO2 EOR | CCPP | Pipeline | FGRS ON |
+            | 3 | CO2 EOR, CO2 EGR | CCPP, FWT | VLGC | FGRS OFF |
+            
+            **Nilai yang valid:**
+            - **Production**: CO2 EOR, CO2 EGR, Supersonic Separator (bisa dikombinasi dengan koma)
+            - **Power**: CCPP, FWT (bisa dikombinasi dengan koma)  
+            - **Transportation**: Pipeline, VLGC, OWS, STS (bisa dikombinasi dengan koma)
+            - **Flaring**: FGRS ON atau FGRS OFF
+            """)
+            
+            # Generate sample template for download
+            sample_df = pd.DataFrame({
+                'Scenario ID': [1, 2, 3, 4, 5],
+                'Production': ['', 'CO2 EOR', 'CO2 EGR', 'CO2 EOR, CO2 EGR', 'CO2 EOR, CO2 EGR, Supersonic Separator'],
+                'Power': ['', 'CCPP', 'FWT', 'CCPP, FWT', 'CCPP, FWT'],
+                'Transportation': ['Pipeline', 'Pipeline', 'VLGC', 'VLGC, OWS', 'Pipeline'],
+                'Flaring': ['FGRS ON', 'FGRS ON', 'FGRS OFF', 'FGRS ON', 'FGRS ON']
+            })
+            
+            from io import BytesIO
+            output = BytesIO()
+            sample_df.to_excel(output, index=False, sheet_name='Sheet1')
+            output.seek(0)
+            
+            st.download_button(
+                label="📥 Download Template Excel",
+                data=output,
+                file_name="scenario_template.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        
+        # File uploader
+        uploaded_file = st.file_uploader(
+            "Upload Excel file with scenario configurations",
+            type=['xlsx', 'xls'],
+            help="Excel should have columns: Scenario ID, Production, Power, Transportation, Flaring"
+        )
+        
+        if uploaded_file:
+            import tempfile
+            import os as os_module
+            
+            # Save uploaded file temporarily
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                tmp_path = tmp_file.name
+            
+            try:
+                # Preview
+                df = pd.read_excel(tmp_path)
+                st.success(f"✅ File loaded: **{len(df)} scenarios** found")
+                
+                # Show column mapping info
+                with st.expander("📋 Column Mapping Reference", expanded=False):
+                    st.markdown("""
+                    | Excel Column | CAPEX Items |
+                    |--------------|-------------|
+                    | **Production** | CO2 EOR, CO2 EGR, Supersonic Separator |
+                    | **Power** | CCPP, FWT |
+                    | **Transportation** | Pipeline, VLGC, OWS, STS |
+                    | **Flaring** | FGRS ON, FGRS OFF |
+                    
+                    *Multiple items can be comma-separated (e.g., "CO2 EOR, CO2 EGR")*
+                    """)
+                
+                # Preview section
+                st.subheader("Preview")
+                with get_db_session() as session:
+                    from engine.bulk_importer import BulkScenarioImporter
+                    importer = BulkScenarioImporter(session)
+                    preview_df = importer.preview_import(tmp_path, limit=10)
+                    st.dataframe(preview_df, use_container_width=True)
+                    
+                    if len(df) > 10:
+                        st.info(f"Showing first 10 of {len(df)} scenarios")
+                
+                st.markdown("---")
+                
+                # Import options
+                st.subheader("Import Options")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    import_mode = st.radio(
+                        "Import Mode",
+                        ["All scenarios", "Select range", "Specific IDs"],
+                        help="Choose which scenarios to import"
+                    )
+                
+                with col2:
+                    if import_mode == "Select range":
+                        start_id = st.number_input("Start ID", min_value=1, max_value=len(df), value=1)
+                        end_id = st.number_input("End ID", min_value=1, max_value=len(df), value=min(10, len(df)))
+                        selected_ids = list(range(int(start_id), int(end_id) + 1))
+                        st.info(f"Will import {len(selected_ids)} scenarios (ID {start_id} to {end_id})")
+                    elif import_mode == "Specific IDs":
+                        ids_input = st.text_input("Enter IDs (comma-separated)", "1, 2, 3")
+                        selected_ids = [int(x.strip()) for x in ids_input.split(',') if x.strip().isdigit()]
+                        st.info(f"Will import {len(selected_ids)} scenarios")
+                    else:
+                        selected_ids = None
+                        st.info(f"Will import all {len(df)} scenarios")
+                
+                # Calculate financials option
+                calc_financials = st.checkbox("Calculate financial metrics", value=True, 
+                    help="Uncheck to import faster (you can calculate later)")
+                
+                # Import button
+                if st.button("🚀 Start Import", type="primary"):
+                    with get_db_session() as session:
+                        from engine.bulk_importer import BulkScenarioImporter
+                        importer = BulkScenarioImporter(session)
+                        
+                        progress_bar = st.progress(0)
+                        status_text = st.empty()
+                        
+                        def update_progress(current, total, message):
+                            progress_bar.progress(current / total)
+                            status_text.text(f"{message} ({current}/{total})")
+                        
+                        results = importer.import_from_excel(
+                            tmp_path,
+                            scenario_ids=selected_ids,
+                            calculate=calc_financials,
+                            progress_callback=update_progress
+                        )
+                        
+                        progress_bar.progress(1.0)
+                        status_text.text("Import complete!")
+                        
+                        # Show results
+                        st.markdown("---")
+                        st.subheader("Import Results")
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        col1.metric("Total", results['total'])
+                        col2.metric("Created", results['created'], delta_color="normal")
+                        col3.metric("Skipped", results['skipped'], delta_color="off")
+                        col4.metric("Errors", results['errors'], delta_color="inverse" if results['errors'] > 0 else "off")
+                        
+                        if results['created'] > 0:
+                            st.success(f"✅ Successfully imported {results['created']} scenarios!")
+                            
+                            # Show created scenarios
+                            with st.expander("View created scenarios", expanded=True):
+                                created = [s for s in results['scenarios'] if s['status'] == 'created']
+                                for s in created[:20]:  # Show first 20
+                                    st.write(f"• **{s['name']}** (ID: {s['scenario_id']}) - CAPEX: ${s['total_capex']:,.0f}")
+                                if len(created) > 20:
+                                    st.info(f"... and {len(created) - 20} more")
+                        
+                        if results['errors'] > 0:
+                            with st.expander("View errors", expanded=True):
+                                errors = [s for s in results['scenarios'] if s['status'] == 'error']
+                                for e in errors:
+                                    st.error(f"Scenario {e['scenario_id']}: {e['error']}")
+                
+            finally:
+                # Cleanup temp file
+                if os_module.path.exists(tmp_path):
+                    os_module.remove(tmp_path)
+        
+        else:
+            # Show template info
+            st.info("👆 Upload an Excel file to get started")
+            
+            st.markdown("### Excel Template Format")
+            st.markdown("""
+            Your Excel file should have these columns:
+            
+            | Column | Description | Example Values |
+            |--------|-------------|----------------|
+            | Scenario ID | Unique identifier | 1, 2, 3, ... |
+            | Production | Production enhancement | CO2 EOR, CO2 EGR, Supersonic Separator |
+            | Power | Power generation | CCPP, FWT |
+            | Transportation | Transport method | Pipeline, VLGC, OWS, STS |
+            | Flaring | Flare gas recovery | FGRS ON, FGRS OFF |
+            
+            **Tips:**
+            - Leave cells empty if no selection for that category
+            - Use comma-separated values for multiple selections (e.g., "CO2 EOR, CO2 EGR")
+            - Pipeline uses default quantity of 30 km
+            """)
     
     elif page == "Manage Scenarios":
         st.title("Manage Scenarios")

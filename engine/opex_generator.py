@@ -51,7 +51,12 @@ class OpexGenerator:
                     base_opex_amount = capex.total_cost * mapping.opex_rate
                     calc_base_note = f"{mapping.opex_rate*100}% of CAPEX (${capex.total_cost:,.2f})"
                 elif mapping.opex_calculation_method == 'FIXED':
-                    # OPEX = fixed amount × quantity
+                    # FIXED: flat rate per year regardless of quantity (e.g., Pipeline maintenance)
+                    # This matches Excel where Pipeline OPEX is $150,000/year regardless of km
+                    base_opex_amount = mapping.opex_rate
+                    calc_base_note = f"Fixed rate ${mapping.opex_rate:,.2f}/year"
+                elif mapping.opex_calculation_method == 'FIXED_PER_UNIT':
+                    # FIXED_PER_UNIT: rate × quantity (e.g., OWS at $1,250 × units)
                     base_opex_amount = mapping.opex_rate * capex.quantity
                     calc_base_note = f"Fixed rate ${mapping.opex_rate:,.2f} × {capex.quantity} units"
                 else:

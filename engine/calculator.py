@@ -4,6 +4,7 @@ Implements all financial calculations based on the mathematical formulas
 """
 import pandas as pd
 import numpy as np
+import numpy_financial as npf
 from typing import Dict, List, Tuple
 from database.models import (
     Scenario, ScenarioCapex, ScenarioOpex, CalculationResult, ScenarioMetrics,
@@ -223,8 +224,8 @@ class FinancialCalculator:
             IRR as decimal (e.g., 0.15 for 15%)
         """
         try:
-            # numpy_financial.irr requires initial investment as negative
-            return float(np.irr(cash_flows))
+            # numpy_financial.irr for IRR calculation (np.irr deprecated)
+            return float(npf.irr(cash_flows))
         except:
             return None
     
@@ -233,8 +234,11 @@ class FinancialCalculator:
         Calculate Payback Period
         When cumulative cash flow becomes positive
         
-        Uses Excel formula: =P32+(-O33/P33)
-        Period when cumulative CF >= 0
+        Uses Excel formula: Payback = T + (-CCF_T / CCF_T+1)
+        Where:
+        - T = year number when CCF first becomes positive (1-indexed)
+        - CCF_T = cumulative CF of year before positive (negative value)
+        - CCF_T+1 = cumulative CF of first positive year
         
         Args:
             results: List of calculation results
@@ -247,15 +251,18 @@ class FinancialCalculator:
                 if i == 0:
                     return 1.0
                 
-                prev_cf = results[i-1].cumulative_cash_flow
-                curr_cf = result.cumulative_cash_flow
+                prev_cf = results[i-1].cumulative_cash_flow  # CCF_T (negative)
+                curr_cf = result.cumulative_cash_flow        # CCF_T+1 (positive)
                 
                 if curr_cf == prev_cf:
                     return float(i + 1)
                 
-                # Fraction calculation: previous period + (abs(prev_cf) / (curr_cf - prev_cf))
-                fraction = abs(prev_cf) / (curr_cf - prev_cf)
-                return float(i) + fraction
+                # Excel formula: T + (-CCF_T / CCF_T+1)
+                # T = i + 1 (1-indexed year number where CCF becomes positive)
+                # Fraction = -prev_cf / curr_cf (since prev_cf is negative, this gives positive fraction)
+                year_positive = i + 1  # Year number when first positive
+                fraction = -prev_cf / curr_cf
+                return float(year_positive) + fraction
         
         return None
     
@@ -381,13 +388,26 @@ class FinancialCalculator:
             available_for_split = total_rev - total_cost_recoverable
             
             # 10. PSC Split based on Available for Split
-            psc_split = self.calculate_psc_split(available_for_split)
+            # CRITICAL: NO SPLIT if:
+            # 1. Available <= 0 (losses), OR
+            # 2. Year is last year (ASR year)
+            if available_for_split <= 0 or year == last_year:
+                psc_split = {
+                    'contractor_pretax': 0,
+                    'contractor_tax': 0,
+                    'contractor_aftertax': 0,
+                    'government_pretax': 0,
+                    'government_total': 0
+                }
+            else:
+                psc_split = self.calculate_psc_split(available_for_split)
             
-            # 11. Net Cash Flow = Available for Split
-            # Cash Flow = Available (sama dengan Revenue - Total Cost)
-            net_cash_flow = available_for_split
-            cumulative_cf += net_cash_flow
-            cash_flows.append(net_cash_flow)
+            # 11. Annual Cash Flow = Available for Split (Revenue - Total Cost)
+            annual_cf = available_for_split
+            
+            # 12. Cumulative Cash Flow
+            cumulative_cf += annual_cf
+            cash_flows.append(cumulative_cf)  # Use cumulative for NPV/IRR
             
             # Store result
             result = CalculationResult(
@@ -407,7 +427,7 @@ class FinancialCalculator:
                 contractor_share_aftertax=psc_split['contractor_aftertax'],
                 government_share_pretax=psc_split['government_pretax'],
                 government_total_take=psc_split['government_total'],
-                cash_flow=net_cash_flow,
+                cash_flow=annual_cf,
                 cumulative_cash_flow=cumulative_cf
             )
             results.append(result)
@@ -415,8 +435,10 @@ class FinancialCalculator:
         # Calculate NPV at 13%
         npv = self.calculate_npv(cash_flows, self.fiscal_terms.discount_rate)
         
-        # Calculate IRR
-        irr = self.calculate_irr(cash_flows)
+        # Calculate IRR using CUMULATIVE cash flows (as per Excel formula)
+        # Excel: =IRR(J33:U33, 20%) where J33:U33 contains cumulative CF
+        cumulative_cash_flows = [r.cumulative_cash_flow for r in results]
+        irr = self.calculate_irr(cumulative_cash_flows)
         
         # Calculate Payback Period
         payback_period = self.calculate_payback_period(results)
@@ -425,14 +447,18 @@ class FinancialCalculator:
         # Gross Revenue = SUM all revenues
         gross_revenue = sum(r.total_revenue for r in results)
         
-        # Contractor Take = SUM contractor after-tax
-        contractor_take = sum(r.contractor_share_aftertax for r in results)
+        # Contractor Take = SUM contractor after-tax (ONLY years with actual split)
+        # Excludes Year 1 (loss) and Year 12 (ASR year) as per Excel
+        contractor_take = sum(r.contractor_share_aftertax for r in results 
+                             if r.contractor_share_aftertax > 0)
         
-        # Gov Take = SUM government total
-        gov_take = sum(r.government_total_take for r in results)
+        # Gov Take = SUM government total (ONLY years with actual split)
+        gov_take = sum(r.government_total_take for r in results 
+                      if r.government_total_take > 0)
         
-        # Contractor PTCF = SUM contractor tax
-        contractor_ptcf = sum(r.contractor_tax for r in results)
+        # Contractor PTCF = SUM contractor tax (ONLY years with actual split)
+        contractor_ptcf = sum(r.contractor_tax for r in results 
+                             if r.contractor_tax > 0)
         
         # Total OPEX
         total_opex = sum(opex_by_year.values())

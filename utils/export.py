@@ -55,7 +55,14 @@ class ExcelExporter:
     
     def _create_summary_sheet(self, scenario: Scenario) -> pd.DataFrame:
         """Create summary information sheet"""
+        from sqlalchemy import text
         metrics = self.session.query(ScenarioMetrics).filter_by(scenario_id=scenario.id).first()
+        
+        # Get Contractor PTCF
+        ptcf_result = self.session.execute(text(
+            'SELECT SUM(contractor_tax) FROM calculation_results WHERE scenario_id = :sid'
+        ), {'sid': scenario.id}).fetchone()
+        contractor_ptcf = float(ptcf_result[0]) if ptcf_result[0] else 0
         
         data = {
             'Item': [
@@ -65,9 +72,12 @@ class ExcelExporter:
                 'Total CAPEX',
                 'Total OPEX',
                 'Total Revenue',
+                'NPV (13%)',
+                'IRR (%)',
+                'Payback Period (years)',
                 'Total Contractor Share',
                 'Total Government Take',
-                'NPV (13%)',
+                'Contractor PTCF (Tax)',
                 'ASR Amount'
             ],
             'Value': [
@@ -77,9 +87,12 @@ class ExcelExporter:
                 f"${metrics.total_capex:,.2f}" if metrics else '-',
                 f"${metrics.total_opex:,.2f}" if metrics else '-',
                 f"${metrics.total_revenue:,.2f}" if metrics else '-',
+                f"${metrics.npv:,.2f}" if metrics else '-',
+                f"{metrics.irr * 100:.2f}%" if metrics and metrics.irr else '-',
+                f"{metrics.payback_period_years:.3f}" if metrics and metrics.payback_period_years else '-',
                 f"${metrics.total_contractor_share:,.2f}" if metrics else '-',
                 f"${metrics.total_government_take:,.2f}" if metrics else '-',
-                f"${metrics.npv:,.2f}" if metrics else '-',
+                f"${contractor_ptcf:,.2f}",
                 f"${metrics.asr_amount:,.2f}" if metrics else '-'
             ]
         }
@@ -176,19 +189,29 @@ class ExcelExporter:
     
     def _create_metrics_sheet(self, scenario_id: int) -> pd.DataFrame:
         """Create metrics summary sheet"""
+        from sqlalchemy import text
         metrics = self.session.query(ScenarioMetrics).filter_by(scenario_id=scenario_id).first()
         
         if not metrics:
             return pd.DataFrame()
+        
+        # Get Contractor PTCF
+        ptcf_result = self.session.execute(text(
+            'SELECT SUM(contractor_tax) FROM calculation_results WHERE scenario_id = :sid'
+        ), {'sid': scenario_id}).fetchone()
+        contractor_ptcf = float(ptcf_result[0]) if ptcf_result[0] else 0
         
         data = {
             'Metric': [
                 'Total CAPEX',
                 'Total OPEX',
                 'Total Revenue',
+                'Net Present Value (NPV @ 13%)',
+                'Internal Rate of Return (IRR)',
+                'Payback Period',
                 'Total Contractor Share (After-tax)',
                 'Total Government Take',
-                'Net Present Value (NPV)',
+                'Contractor PTCF (Total Tax Paid)',
                 'Abandonment Security Reserve (ASR)',
                 'Calculated At'
             ],
@@ -196,9 +219,12 @@ class ExcelExporter:
                 metrics.total_capex,
                 metrics.total_opex,
                 metrics.total_revenue,
+                metrics.npv,
+                f"{metrics.irr * 100:.2f}%" if metrics.irr else 'N/A',
+                f"{metrics.payback_period_years:.3f} years" if metrics.payback_period_years else 'N/A',
                 metrics.total_contractor_share,
                 metrics.total_government_take,
-                metrics.npv,
+                contractor_ptcf,
                 metrics.asr_amount,
                 metrics.calculated_at.strftime('%Y-%m-%d %H:%M:%S') if metrics.calculated_at else '-'
             ]
@@ -231,11 +257,18 @@ class ExcelExporter:
     
     def _create_comparison_sheet(self, scenario_ids: List[int]) -> pd.DataFrame:
         """Create comparison summary sheet"""
+        from sqlalchemy import text
         data = []
         
         for scenario_id in scenario_ids:
             scenario = self.session.query(Scenario).filter_by(id=scenario_id).first()
             metrics = self.session.query(ScenarioMetrics).filter_by(scenario_id=scenario_id).first()
+            
+            # Get Contractor PTCF
+            ptcf_result = self.session.execute(text(
+                'SELECT SUM(contractor_tax) FROM calculation_results WHERE scenario_id = :sid'
+            ), {'sid': scenario_id}).fetchone()
+            contractor_ptcf = float(ptcf_result[0]) if ptcf_result[0] else 0
             
             if scenario and metrics:
                 data.append({
@@ -244,9 +277,12 @@ class ExcelExporter:
                     'Total CAPEX': metrics.total_capex,
                     'Total OPEX': metrics.total_opex,
                     'Total Revenue': metrics.total_revenue,
+                    'NPV (13%)': metrics.npv,
+                    'IRR (%)': metrics.irr * 100 if metrics.irr else 0,
+                    'Payback Period (years)': metrics.payback_period_years if metrics.payback_period_years else 0,
                     'Contractor Share': metrics.total_contractor_share,
                     'Government Take': metrics.total_government_take,
-                    'NPV': metrics.npv,
+                    'Contractor PTCF (Tax)': contractor_ptcf,
                     'ASR': metrics.asr_amount
                 })
         
