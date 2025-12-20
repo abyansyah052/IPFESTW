@@ -68,6 +68,14 @@ class ScenarioComparator:
         """
         Rank scenarios based on multiple criteria
         
+        Scoring Weights (Total = 100%):
+        - NPV: 30% (Higher is better)
+        - Contractor Share: 25% (Higher is better)
+        - IRR: 15% (Higher is better)
+        - Payback Period: 10% (Lower is better)
+        - CAPEX: 10% (Lower is better)
+        - OPEX: 10% (Lower is better)
+        
         Args:
             scenario_ids: List of scenario IDs to compare
             
@@ -80,39 +88,60 @@ class ScenarioComparator:
             return []
         
         # Normalize metrics for scoring (0-1 scale)
-        # Higher NPV is better
+        
+        # 1. NPV - Higher is better (30%)
         if df['npv'].max() != df['npv'].min():
             df['npv_score'] = (df['npv'] - df['npv'].min()) / (df['npv'].max() - df['npv'].min())
         else:
             df['npv_score'] = 1.0
         
-        # Higher contractor share is better
+        # 2. Contractor Share - Higher is better (25%)
         if df['total_contractor_share'].max() != df['total_contractor_share'].min():
             df['contractor_score'] = (df['total_contractor_share'] - df['total_contractor_share'].min()) / \
                                      (df['total_contractor_share'].max() - df['total_contractor_share'].min())
         else:
             df['contractor_score'] = 1.0
         
-        # Lower CAPEX is better (inverted)
+        # 3. IRR - Higher is better (15%)
+        # Handle None/NaN values by filling with minimum
+        df['irr_filled'] = df['irr'].fillna(df['irr'].min() if df['irr'].notna().any() else 0)
+        if df['irr_filled'].max() != df['irr_filled'].min():
+            df['irr_score'] = (df['irr_filled'] - df['irr_filled'].min()) / \
+                              (df['irr_filled'].max() - df['irr_filled'].min())
+        else:
+            df['irr_score'] = 1.0
+        
+        # 4. Payback Period - Lower is better (10%)
+        # Handle None/NaN values by filling with maximum (worst case)
+        df['payback_filled'] = df['payback_period'].fillna(df['payback_period'].max() if df['payback_period'].notna().any() else 99)
+        if df['payback_filled'].max() != df['payback_filled'].min():
+            df['payback_score'] = 1 - (df['payback_filled'] - df['payback_filled'].min()) / \
+                                  (df['payback_filled'].max() - df['payback_filled'].min())
+        else:
+            df['payback_score'] = 1.0
+        
+        # 5. CAPEX - Lower is better (10%)
         if df['total_capex'].max() != df['total_capex'].min():
             df['capex_score'] = 1 - (df['total_capex'] - df['total_capex'].min()) / \
                                 (df['total_capex'].max() - df['total_capex'].min())
         else:
             df['capex_score'] = 1.0
         
-        # Lower OPEX is better (inverted)
+        # 6. OPEX - Lower is better (10%)
         if df['total_opex'].max() != df['total_opex'].min():
             df['opex_score'] = 1 - (df['total_opex'] - df['total_opex'].min()) / \
                                (df['total_opex'].max() - df['total_opex'].min())
         else:
             df['opex_score'] = 1.0
         
-        # Calculate weighted total score
+        # Calculate weighted total score (NEW WEIGHTS)
         df['total_score'] = (
-            df['npv_score'] * 0.40 +
-            df['contractor_score'] * 0.30 +
-            df['capex_score'] * 0.15 +
-            df['opex_score'] * 0.15
+            df['npv_score'] * 0.30 +         # NPV: 30%
+            df['contractor_score'] * 0.25 +   # Contractor Share: 25%
+            df['irr_score'] * 0.15 +          # IRR: 15%
+            df['payback_score'] * 0.10 +      # Payback Period: 10%
+            df['capex_score'] * 0.10 +        # CAPEX: 10%
+            df['opex_score'] * 0.10           # OPEX: 10%
         ) * 100
         
         # Sort by score
