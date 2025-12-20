@@ -1347,19 +1347,59 @@ def main():
             """)
     
     elif page == "Manage Scenarios":
-        st.title("Manage Scenarios")
+        st.title("📋 Manage Scenarios")
         
         with get_db_session() as session:
-            scenarios = session.query(Scenario).filter_by(is_active=True).order_by(Scenario.created_at.desc()).all()
+            # Sorting options
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                sort_order = st.radio(
+                    "Sort by",
+                    ["Newest First", "Oldest First"],
+                    horizontal=True,
+                    key="manage_sort"
+                )
+            
+            # Query with sorting
+            if sort_order == "Newest First":
+                scenarios = session.query(Scenario).filter_by(is_active=True).order_by(Scenario.created_at.desc()).all()
+            else:
+                scenarios = session.query(Scenario).filter_by(is_active=True).order_by(Scenario.created_at.asc()).all()
             
             if not scenarios:
                 st.warning("No scenarios found. Create a new scenario to get started.")
             else:
                 st.markdown(f"**Total Active Scenarios:** {len(scenarios)}")
+                
+                # Pagination - 10 per page
+                items_per_page = 10
+                total_items = len(scenarios)
+                total_pages = max(1, (total_items - 1) // items_per_page + 1)
+                
+                # Page selector
+                with col2:
+                    if 'manage_page' not in st.session_state:
+                        st.session_state.manage_page = 1
+                    
+                    page_num = st.selectbox(
+                        "Page",
+                        range(1, total_pages + 1),
+                        index=min(st.session_state.manage_page - 1, total_pages - 1),
+                        format_func=lambda x: f"Page {x}/{total_pages}",
+                        key="manage_page_select"
+                    )
+                    st.session_state.manage_page = page_num
+                
+                # Get current page items
+                start_idx = (page_num - 1) * items_per_page
+                end_idx = start_idx + items_per_page
+                page_scenarios = scenarios[start_idx:end_idx]
+                
+                st.caption(f"Showing {start_idx + 1}-{min(end_idx, total_items)} of {total_items} scenarios")
                 st.markdown("---")
                 
                 # Display scenarios in a table with actions
-                for scenario in scenarios:
+                for scenario in page_scenarios:
                     with st.expander(f"**{scenario.name}** - Created: {scenario.created_at.strftime('%Y-%m-%d %H:%M')}"):
                         if scenario.description:
                             st.write(f"**Description:** {scenario.description}")
@@ -1477,6 +1517,28 @@ def main():
                                 st.session_state.selected_scenario_id = scenario.id
                                 st.session_state.page = "View Scenarios"
                                 st.rerun()
+                
+                # Pagination navigation buttons
+                st.markdown("---")
+                col1, col2, col3, col4, col5 = st.columns(5)
+                with col1:
+                    if st.button("⏮️ First", disabled=(page_num == 1), key="manage_first"):
+                        st.session_state.manage_page = 1
+                        st.rerun()
+                with col2:
+                    if st.button("◀️ Prev", disabled=(page_num == 1), key="manage_prev"):
+                        st.session_state.manage_page = page_num - 1
+                        st.rerun()
+                with col3:
+                    st.markdown(f"<center>Page {page_num} of {total_pages}</center>", unsafe_allow_html=True)
+                with col4:
+                    if st.button("Next ▶️", disabled=(page_num == total_pages), key="manage_next"):
+                        st.session_state.manage_page = page_num + 1
+                        st.rerun()
+                with col5:
+                    if st.button("Last ⏭️", disabled=(page_num == total_pages), key="manage_last"):
+                        st.session_state.manage_page = total_pages
+                        st.rerun()
     
     elif page == "View Scenarios":
         st.title("View Existing Scenarios")
