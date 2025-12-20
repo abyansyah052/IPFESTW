@@ -779,14 +779,78 @@ def compare_scenarios_page():
                 avg_payback = df['Payback (years)'].mean()
                 st.metric("Avg Payback", f"{avg_payback:.2f} yrs" if pd.notna(avg_payback) else "N/A")
             
-            # Detailed Comparison - sorted by NPV descending (no user sort options)
+            # Detailed Comparison - with Score and sorting
             st.markdown("### Detailed Comparison")
             
-            # Sort by NPV descending by default
-            df_sorted = df.sort_values(by='NPV (13%)', ascending=False, na_position='last')
+            # Calculate scores using comparator
+            comparator = ScenarioComparator(session)
+            ranked = comparator.rank_scenarios(selected_ids)
+            
+            # Create score and rank dictionary
+            score_dict = {r['scenario_id']: r['total_score'] for r in ranked}
+            rank_dict = {r['scenario_id']: r['rank'] for r in ranked}
+            
+            # Add Score and Rank to dataframe
+            df['Score'] = df['ID'].map(score_dict)
+            df['Rank'] = df['ID'].map(rank_dict)
+            
+            # Reorder columns - Rank first, keep all columns
+            cols = ['Rank', 'Scenario', 'Score', 'NPV (13%)', 'IRR (%)', 'Payback (years)', 
+                    'Gross Revenue', 'Contractor Take', 'Gov Take', 'Contractor PTCF', 'Total CAPEX', 'Total OPEX']
+            df = df[[c for c in cols if c in df.columns]]
+            
+            # Sorting options
+            col1, col2 = st.columns([2, 1])
+            with col1:
+                sort_by = st.selectbox(
+                    "Sort by",
+                    ['Score', 'NPV (13%)', 'IRR (%)', 'Payback (years)', 'Contractor Take'],
+                    index=0,
+                    key="detail_sort_by"
+                )
+            with col2:
+                sort_order = st.radio("Order", ["Descending", "Ascending"], horizontal=True, key="detail_sort_order")
+            
+            # Determine sort direction (Payback: lower is better)
+            if sort_by == 'Payback (years)':
+                ascending = (sort_order == "Descending")  # For payback, descending shows worst first
+            else:
+                ascending = (sort_order == "Ascending")
+            
+            df_sorted = df.sort_values(by=sort_by, ascending=ascending, na_position='last').reset_index(drop=True)
+            
+            # Re-number Rank based on current sort (1, 2, 3, ...)
+            df_sorted['Rank'] = range(1, len(df_sorted) + 1)
+            
+            # Pagination - 10 per page
+            items_per_page = 10
+            total_items = len(df_sorted)
+            total_pages = max(1, (total_items - 1) // items_per_page + 1)
+            
+            # Page selector
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                if 'detail_page' not in st.session_state:
+                    st.session_state.detail_page = 1
+                
+                page_num = st.selectbox(
+                    "Page",
+                    range(1, total_pages + 1),
+                    index=min(st.session_state.detail_page - 1, total_pages - 1),
+                    format_func=lambda x: f"Page {x} of {total_pages} (showing {(x-1)*10+1}-{min(x*10, total_items)} of {total_items})",
+                    key="detail_page_select"
+                )
+                st.session_state.detail_page = page_num
+            
+            # Get current page
+            start_idx = (page_num - 1) * items_per_page
+            end_idx = start_idx + items_per_page
+            df_page = df_sorted.iloc[start_idx:end_idx].copy()
             
             # Format for display
-            df_display = df_sorted.copy()
+            df_display = df_page.copy()
+            df_display['Rank'] = df_display['Rank'].astype(int)  # Ensure Rank is integer
+            df_display['Score'] = df_display['Score'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
             for col in ['NPV (13%)', 'Gross Revenue', 'Contractor Take', 'Gov Take', 'Contractor PTCF', 'Total CAPEX', 'Total OPEX']:
                 if col in df_display.columns:
                     df_display[col] = df_display[col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
@@ -796,6 +860,25 @@ def compare_scenarios_page():
                 df_display['Payback (years)'] = df_display['Payback (years)'].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "N/A")
             
             st.dataframe(df_display, use_container_width=True, hide_index=True)
+            
+            # Navigation buttons
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                if st.button("<< First", disabled=(page_num == 1), key="detail_first"):
+                    st.session_state.detail_page = 1
+                    st.rerun()
+            with col2:
+                if st.button("< Prev", disabled=(page_num == 1), key="detail_prev"):
+                    st.session_state.detail_page = page_num - 1
+                    st.rerun()
+            with col3:
+                if st.button("Next >", disabled=(page_num == total_pages), key="detail_next"):
+                    st.session_state.detail_page = page_num + 1
+                    st.rerun()
+            with col4:
+                if st.button("Last >>", disabled=(page_num == total_pages), key="detail_last"):
+                    st.session_state.detail_page = total_pages
+                    st.rerun()
             
             # Charts for bulk comparison
             st.markdown("### Visual Comparison")

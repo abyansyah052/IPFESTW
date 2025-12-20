@@ -119,11 +119,16 @@ class ScenarioComparator:
             df['contractor_score'] = 1.0
         
         # 3. IRR - Higher is better (15%)
-        # Handle None/NaN values by filling with minimum
-        df['irr_filled'] = df['irr'].fillna(df['irr'].min() if df['irr'].notna().any() else 0)
-        if df['irr_filled'].max() != df['irr_filled'].min():
-            df['irr_score'] = (df['irr_filled'] - df['irr_filled'].min()) / \
-                              (df['irr_filled'].max() - df['irr_filled'].min())
+        # CAP IRR at 100% for scoring to handle extreme cases:
+        # - IRR > 100% (very high returns) → capped at 100%
+        # - IRR = NaN (all positive CFs, instant payback) → treated as 100%
+        # This prevents scenarios with tiny CAPEX from dominating unfairly
+        IRR_CAP = 1.0  # 100% cap for scoring purposes
+        df['irr_capped'] = df['irr'].apply(lambda x: min(x, IRR_CAP) if pd.notna(x) and x > 0 else IRR_CAP if pd.isna(x) else 0)
+        
+        if df['irr_capped'].max() != df['irr_capped'].min():
+            df['irr_score'] = (df['irr_capped'] - df['irr_capped'].min()) / \
+                              (df['irr_capped'].max() - df['irr_capped'].min())
         else:
             df['irr_score'] = 1.0
         
