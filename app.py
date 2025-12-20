@@ -627,21 +627,20 @@ def compare_scenarios_page():
             st.plotly_chart(fig3, use_container_width=True)
             
             # Export comparison
-            if st.button("Export Comparison to Excel"):
-                ensure_export_directory()
-                filename = generate_filename("scenario_comparison")
-                filepath = os.path.join('exports', filename)
-                
+            if st.button("Export Comparison to Excel", key="export_comparison_btn"):
+                from io import BytesIO
+                output = BytesIO()
                 exporter = ExcelExporter(session)
-                exporter.export_comparison(selected_ids, filepath)
-                
-                with open(filepath, 'rb') as f:
-                    st.download_button(
-                        label="Download Comparison Excel",
-                        data=f,
-                        file_name=filename,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                exporter.export_comparison(selected_ids, output)
+                output.seek(0)
+                filename = generate_filename("scenario_comparison")
+                st.download_button(
+                    label="Download Comparison Excel",
+                    data=output,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_comparison_btn"
+                )
 
 def main():
     """Main application"""
@@ -821,7 +820,7 @@ def main():
                                 st.metric("Total Revenue", f"${metrics.total_revenue:,.0f}")
                         
                         st.markdown("---")
-                        col_a, col_b, col_c, col_d = st.columns(4)
+                        col_a, col_b, col_c, col_d, col_e = st.columns(5)
                         
                         with col_a:
                             if st.button("Edit", key=f"edit_{scenario.id}"):
@@ -830,6 +829,26 @@ def main():
                                 st.rerun()
                         
                         with col_b:
+                            if st.button("Download", key=f"download_{scenario.id}"):
+                                ensure_export_directory()
+                                filename = generate_filename(scenario.name)
+                                filepath = os.path.join('exports', filename)
+                                
+                                exporter = ExcelExporter(session)
+                                exporter.export_scenario(scenario.id, filepath)
+                                
+                                with open(filepath, 'rb') as f:
+                                    file_data = f.read()
+                                
+                                st.download_button(
+                                    label=f"📥 {filename}",
+                                    data=file_data,
+                                    file_name=filename,
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key=f"dl_btn_{scenario.id}"
+                                )
+                        
+                        with col_c:
                             if st.button("Duplicate", key=f"dup_{scenario.id}"):
                                 # Duplicate scenario
                                 new_name = f"{scenario.name} (Copy)"
@@ -876,7 +895,7 @@ def main():
                                 st.success(f"Scenario '{new_name}' created successfully!")
                                 st.rerun()
                         
-                        with col_c:
+                        with col_d:
                             if st.button("Delete", key=f"del_{scenario.id}", type="secondary"):
                                 if st.session_state.get(f"confirm_delete_{scenario.id}", False):
                                     # Delete related data
@@ -895,7 +914,7 @@ def main():
                                     st.session_state[f"confirm_delete_{scenario.id}"] = True
                                     st.warning("Click Delete again to confirm")
                         
-                        with col_d:
+                        with col_e:
                             if st.button("View Details", key=f"view_{scenario.id}"):
                                 st.session_state.selected_scenario_id = scenario.id
                                 st.session_state.page = "View Scenarios"
@@ -927,7 +946,7 @@ def main():
                     
                     # Export option
                     st.markdown("---")
-                    if st.button("Export this Scenario to Excel"):
+                    if st.button("Export this Scenario to Excel", key="export_scenario_btn"):
                         ensure_export_directory()
                         scenario = session.query(Scenario).filter_by(id=scenario_id).first()
                         filename = generate_filename(scenario.name)
@@ -937,12 +956,15 @@ def main():
                         exporter.export_scenario(scenario_id, filepath)
                         
                         with open(filepath, 'rb') as f:
-                            st.download_button(
-                                label="Download Excel Report",
-                                data=f,
-                                file_name=filename,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                            )
+                            file_data = f.read()
+                        
+                        st.download_button(
+                            label="Download Excel Report",
+                            data=file_data,
+                            file_name=filename,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_scenario_btn"
+                        )
     
     elif page == "Compare Scenarios":
         compare_scenarios_page()
