@@ -801,92 +801,205 @@ def compare_scenarios_page():
                     'Gross Revenue', 'Contractor Take', 'Gov Take', 'Contractor PTCF', 'Total CAPEX', 'Total OPEX']
             df = df[[c for c in cols if c in df.columns]]
             
-            # Sorting options
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                sort_by = st.selectbox(
-                    "Sort by",
-                    ['Score', 'NPV (13%)', 'IRR (%)', 'Payback (years)', 'Contractor Take'],
-                    index=0,
-                    key="detail_sort_by"
-                )
-            with col2:
-                sort_order = st.radio("Order", ["Descending", "Ascending"], horizontal=True, key="detail_sort_order")
+            # TABS FOR ALL vs REALISTIC IRR
+            tab_all, tab_realistic = st.tabs(["All Scenarios", "Realistic IRR (15-30%)"])
             
-            # Determine sort direction (Payback: lower is better)
-            if sort_by == 'Payback (years)':
-                ascending = (sort_order == "Descending")  # For payback, descending shows worst first
-            else:
-                ascending = (sort_order == "Ascending")
-            
-            df_sorted = df.sort_values(by=sort_by, ascending=ascending, na_position='last').reset_index(drop=True)
-            
-            # Re-number Rank based on current sort (1, 2, 3, ...)
-            df_sorted['Rank'] = range(1, len(df_sorted) + 1)
-            
-            # Pagination - 10 per page
-            items_per_page = 10
-            total_items = len(df_sorted)
-            total_pages = max(1, (total_items - 1) // items_per_page + 1)
-            
-            # Page selector
-            if 'detail_page' not in st.session_state:
-                st.session_state.detail_page = 1
-            
-            # Ensure page is within bounds
-            st.session_state.detail_page = max(1, min(st.session_state.detail_page, total_pages))
-            
-            col1, col2, col3 = st.columns([1, 2, 1])
-            with col2:
-                page_num = st.selectbox(
-                    "Page",
-                    range(1, total_pages + 1),
-                    index=st.session_state.detail_page - 1,
-                    format_func=lambda x: f"Page {x} of {total_pages} (showing {(x-1)*10+1}-{min(x*10, total_items)} of {total_items})",
-                    key="detail_page_select"
-                )
-                # Sync selectbox value to session state
-                if page_num != st.session_state.detail_page:
-                    st.session_state.detail_page = page_num
-            
-            # Get current page using session state
-            current_page = st.session_state.detail_page
-            start_idx = (current_page - 1) * items_per_page
-            end_idx = start_idx + items_per_page
-            df_page = df_sorted.iloc[start_idx:end_idx].copy()
-            
-            # Format for display
-            df_display = df_page.copy()
-            df_display['Rank'] = df_display['Rank'].astype(int)  # Ensure Rank is integer
-            df_display['Score'] = df_display['Score'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-            for col in ['NPV (13%)', 'Gross Revenue', 'Contractor Take', 'Gov Take', 'Contractor PTCF', 'Total CAPEX', 'Total OPEX']:
-                if col in df_display.columns:
-                    df_display[col] = df_display[col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
-            if 'IRR (%)' in df_display.columns:
-                df_display['IRR (%)'] = df_display['IRR (%)'].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A")
-            if 'Payback (years)' in df_display.columns:
-                df_display['Payback (years)'] = df_display['Payback (years)'].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "N/A")
-            
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
-            
-            # Navigation buttons
-            nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
-            with nav_col1:
-                if st.button("<< First", disabled=(st.session_state.detail_page == 1), key="detail_first", use_container_width=True):
+            # ===== TAB 1: ALL SCENARIOS =====
+            with tab_all:
+                # Sorting options
+                col1, col2 = st.columns([2, 1])
+                with col1:
+                    sort_by = st.selectbox(
+                        "Sort by",
+                        ['Score', 'NPV (13%)', 'IRR (%)', 'Payback (years)', 'Contractor Take'],
+                        index=0,
+                        key="detail_sort_by"
+                    )
+                with col2:
+                    sort_order = st.radio("Order", ["Descending", "Ascending"], horizontal=True, key="detail_sort_order")
+                
+                # Determine sort direction (Payback: lower is better)
+                if sort_by == 'Payback (years)':
+                    ascending = (sort_order == "Descending")  # For payback, descending shows worst first
+                else:
+                    ascending = (sort_order == "Ascending")
+                
+                df_sorted = df.sort_values(by=sort_by, ascending=ascending, na_position='last').reset_index(drop=True)
+                
+                # Re-number Rank based on current sort (1, 2, 3, ...)
+                df_sorted['Rank'] = range(1, len(df_sorted) + 1)
+                
+                # Pagination - 10 per page
+                items_per_page = 10
+                total_items = len(df_sorted)
+                total_pages = max(1, (total_items - 1) // items_per_page + 1)
+                
+                # Page selector
+                if 'detail_page' not in st.session_state:
                     st.session_state.detail_page = 1
-                    st.rerun()
-            with nav_col2:
-                if st.button("< Prev", disabled=(st.session_state.detail_page == 1), key="detail_prev", use_container_width=True):
-                    st.session_state.detail_page = st.session_state.detail_page - 1
-                    st.rerun()
-            with nav_col3:
-                if st.button("Next >", disabled=(st.session_state.detail_page == total_pages), key="detail_next", use_container_width=True):
-                    st.session_state.detail_page = st.session_state.detail_page + 1
-                    st.rerun()
-            with nav_col4:
-                if st.button("Last >>", disabled=(st.session_state.detail_page == total_pages), key="detail_last", use_container_width=True):
-                    st.session_state.detail_page = total_pages
-                    st.rerun()
+                
+                # Ensure page is within bounds
+                st.session_state.detail_page = max(1, min(st.session_state.detail_page, total_pages))
+                
+                col1, col2, col3 = st.columns([1, 2, 1])
+                with col2:
+                    page_num = st.selectbox(
+                        "Page",
+                        range(1, total_pages + 1),
+                        index=st.session_state.detail_page - 1,
+                        format_func=lambda x: f"Page {x} of {total_pages} (showing {(x-1)*10+1}-{min(x*10, total_items)} of {total_items})",
+                        key="detail_page_select"
+                    )
+                    # Sync selectbox value to session state
+                    if page_num != st.session_state.detail_page:
+                        st.session_state.detail_page = page_num
+                
+                # Get current page using session state
+                current_page = st.session_state.detail_page
+                start_idx = (current_page - 1) * items_per_page
+                end_idx = start_idx + items_per_page
+                df_page = df_sorted.iloc[start_idx:end_idx].copy()
+                
+                # Format for display
+                df_display = df_page.copy()
+                df_display['Rank'] = df_display['Rank'].astype(int)  # Ensure Rank is integer
+                df_display['Score'] = df_display['Score'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+                for col in ['NPV (13%)', 'Gross Revenue', 'Contractor Take', 'Gov Take', 'Contractor PTCF', 'Total CAPEX', 'Total OPEX']:
+                    if col in df_display.columns:
+                        df_display[col] = df_display[col].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "N/A")
+                if 'IRR (%)' in df_display.columns:
+                    df_display['IRR (%)'] = df_display['IRR (%)'].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A")
+                if 'Payback (years)' in df_display.columns:
+                    df_display['Payback (years)'] = df_display['Payback (years)'].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "N/A")
+                
+                st.dataframe(df_display, use_container_width=True, hide_index=True)
+                
+                # Navigation buttons
+                nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
+                with nav_col1:
+                    if st.button("<< First", disabled=(st.session_state.detail_page == 1), key="detail_first", use_container_width=True):
+                        st.session_state.detail_page = 1
+                        st.rerun()
+                with nav_col2:
+                    if st.button("< Prev", disabled=(st.session_state.detail_page == 1), key="detail_prev", use_container_width=True):
+                        st.session_state.detail_page = st.session_state.detail_page - 1
+                        st.rerun()
+                with nav_col3:
+                    if st.button("Next >", disabled=(st.session_state.detail_page == total_pages), key="detail_next", use_container_width=True):
+                        st.session_state.detail_page = st.session_state.detail_page + 1
+                        st.rerun()
+                with nav_col4:
+                    if st.button("Last >>", disabled=(st.session_state.detail_page == total_pages), key="detail_last", use_container_width=True):
+                        st.session_state.detail_page = total_pages
+                        st.rerun()
+            
+            # ===== TAB 2: REALISTIC IRR 15-30% =====
+            with tab_realistic:
+                st.caption("Scenarios with realistic Internal Rate of Return between 15% and 30%, ranked by overall score")
+                
+                # Filter for IRR between 15-30%
+                realistic_irr = [
+                    r for r in ranked 
+                    if r.get('irr') and 0.15 <= r['irr'] <= 0.30
+                ]
+                
+                if realistic_irr:
+                    # Re-rank within filtered set
+                    for i, r in enumerate(realistic_irr, 1):
+                        r['filtered_rank'] = i
+                    
+                    st.info(f"Found **{len(realistic_irr)} scenarios** with IRR between 15% and 30%")
+                    
+                    # Create dataframe from realistic scenarios
+                    realistic_data = []
+                    for r in realistic_irr:
+                        realistic_data.append({
+                            'Rank': r['filtered_rank'],
+                            'Scenario': r['scenario_name'],
+                            'Score': r['total_score'],
+                            'NPV (13%)': r['npv'],
+                            'IRR (%)': r['irr'] * 100 if r.get('irr') else None,
+                            'Payback (years)': r.get('payback_period'),
+                            'Contractor Take': r['total_contractor_share'],
+                            'CAPEX': r['total_capex'],
+                            'OPEX': r['total_opex']
+                        })
+                    
+                    df_realistic = pd.DataFrame(realistic_data)
+                    
+                    # Pagination - 20 per page
+                    realistic_per_page = 20
+                    realistic_total = len(df_realistic)
+                    realistic_pages = max(1, (realistic_total - 1) // realistic_per_page + 1)
+                    
+                    # Page selector
+                    if 'realistic_page' not in st.session_state:
+                        st.session_state.realistic_page = 1
+                    
+                    st.session_state.realistic_page = max(1, min(st.session_state.realistic_page, realistic_pages))
+                    
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        realistic_page_num = st.selectbox(
+                            "Page",
+                            range(1, realistic_pages + 1),
+                            index=st.session_state.realistic_page - 1,
+                            format_func=lambda x: f"Page {x} of {realistic_pages} (showing {(x-1)*20+1}-{min(x*20, realistic_total)} of {realistic_total})",
+                            key="realistic_page_select"
+                        )
+                        if realistic_page_num != st.session_state.realistic_page:
+                            st.session_state.realistic_page = realistic_page_num
+                    
+                    # Get current page
+                    current_page_r = st.session_state.realistic_page
+                    start_idx_r = (current_page_r - 1) * realistic_per_page
+                    end_idx_r = start_idx_r + realistic_per_page
+                    df_realistic_page = df_realistic.iloc[start_idx_r:end_idx_r].copy()
+                    
+                    # Format for display
+                    df_realistic_display = df_realistic_page.copy()
+                    df_realistic_display['Rank'] = df_realistic_display['Rank'].astype(int)
+                    df_realistic_display['Score'] = df_realistic_display['Score'].apply(lambda x: f"{x:.2f}")
+                    df_realistic_display['NPV (13%)'] = df_realistic_display['NPV (13%)'].apply(lambda x: f"${x:,.0f}")
+                    df_realistic_display['IRR (%)'] = df_realistic_display['IRR (%)'].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A")
+                    df_realistic_display['Payback (years)'] = df_realistic_display['Payback (years)'].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "N/A")
+                    df_realistic_display['Contractor Take'] = df_realistic_display['Contractor Take'].apply(lambda x: f"${x:,.0f}")
+                    df_realistic_display['CAPEX'] = df_realistic_display['CAPEX'].apply(lambda x: f"${x:,.0f}")
+                    df_realistic_display['OPEX'] = df_realistic_display['OPEX'].apply(lambda x: f"${x:,.0f}")
+                    
+                    st.dataframe(df_realistic_display, use_container_width=True, hide_index=True)
+                    
+                    # Navigation buttons
+                    nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
+                    with nav_col1:
+                        if st.button("<< First", disabled=(st.session_state.realistic_page == 1), key="realistic_first", use_container_width=True):
+                            st.session_state.realistic_page = 1
+                            st.rerun()
+                    with nav_col2:
+                        if st.button("< Prev", disabled=(st.session_state.realistic_page == 1), key="realistic_prev", use_container_width=True):
+                            st.session_state.realistic_page -= 1
+                            st.rerun()
+                    with nav_col3:
+                        if st.button("Next >", disabled=(st.session_state.realistic_page == realistic_pages), key="realistic_next", use_container_width=True):
+                            st.session_state.realistic_page += 1
+                            st.rerun()
+                    with nav_col4:
+                        if st.button("Last >>", disabled=(st.session_state.realistic_page == realistic_pages), key="realistic_last", use_container_width=True):
+                            st.session_state.realistic_page = realistic_pages
+                            st.rerun()
+                    
+                    # Export CSV
+                    st.markdown("#### Export Realistic IRR Scenarios")
+                    csv_realistic = df_realistic.to_csv(index=False)
+                    st.download_button(
+                        f"Download All Realistic IRR Scenarios ({len(realistic_irr)} total) - CSV",
+                        csv_realistic,
+                        "realistic_irr_scenarios_15-30pct.csv",
+                        "text/csv",
+                        key="realistic_csv_download"
+                    )
+                else:
+                    st.warning("No scenarios found with IRR between 15% and 30%")
             
             # Charts for bulk comparison
             st.markdown("### Visual Comparison")
@@ -1115,141 +1228,6 @@ def compare_scenarios_page():
                     "text/csv",
                     key="lb_csv_download"
                 )
-            
-            # REALISTIC IRR RANKING (15-30%)
-            st.markdown("---")
-            st.markdown("### Realistic IRR Scenarios (15-30%)")
-            st.caption("Scenarios with realistic Internal Rate of Return between 15% and 30%, ranked by overall score")
-            
-            with get_session() as session:
-                # Get all scenarios
-                all_scenarios = session.query(Scenario.id).all()
-                all_ids = [s[0] for s in all_scenarios]
-                
-                # Rank all scenarios
-                comparator = ScenarioComparator(session)
-                all_ranked = comparator.rank_scenarios(all_ids)
-                
-                # Filter for IRR between 15-30% (0.15-0.30)
-                realistic_irr = [
-                    r for r in all_ranked 
-                    if r.get('irr') and 0.15 <= r['irr'] <= 0.30
-                ]
-                
-                if realistic_irr:
-                    # Re-rank within this filtered set
-                    for i, r in enumerate(realistic_irr, 1):
-                        r['filtered_rank'] = i
-                    
-                    st.info(f"Found **{len(realistic_irr)} scenarios** with IRR between 15% and 30%")
-                    
-                    # Pagination for realistic IRR
-                    realistic_per_page = 20
-                    realistic_total = len(realistic_irr)
-                    realistic_pages = max(1, (realistic_total - 1) // realistic_per_page + 1)
-                    
-                    col1, col2, col3 = st.columns([1, 2, 1])
-                    with col2:
-                        if 'realistic_page' not in st.session_state:
-                            st.session_state.realistic_page = 1
-                        
-                        realistic_page = st.selectbox(
-                            "Page",
-                            range(1, realistic_pages + 1),
-                            index=st.session_state.realistic_page - 1,
-                            format_func=lambda x: f"Page {x} of {realistic_pages} (showing {(x-1)*20+1}-{min(x*20, realistic_total)} of {realistic_total})",
-                            key="realistic_page_select"
-                        )
-                        st.session_state.realistic_page = realistic_page
-                    
-                    # Get page data
-                    start = (realistic_page - 1) * realistic_per_page
-                    end = start + realistic_per_page
-                    page_data = realistic_irr[start:end]
-                    
-                    # Build dataframe
-                    realistic_data = []
-                    for r in page_data:
-                        realistic_data.append({
-                            'Rank': r['filtered_rank'],
-                            'Scenario': r['scenario_name'],
-                            'Score': r['total_score'],
-                            'NPV (13%)': r['npv'],
-                            'IRR (%)': r['irr'] * 100,
-                            'Payback (years)': r.get('payback_period'),
-                            'Contractor Take': r['total_contractor_share'],
-                            'Total CAPEX': r['total_capex'],
-                            'Total OPEX': r['total_opex']
-                        })
-                    
-                    realistic_df = pd.DataFrame(realistic_data)
-                    
-                    # Format display
-                    realistic_display = realistic_df.copy()
-                    realistic_display['Score'] = realistic_display['Score'].apply(lambda x: f"{x:.2f}")
-                    realistic_display['NPV (13%)'] = realistic_display['NPV (13%)'].apply(lambda x: f"${x:,.0f}")
-                    realistic_display['IRR (%)'] = realistic_display['IRR (%)'].apply(lambda x: f"{x:.2f}%")
-                    realistic_display['Payback (years)'] = realistic_display['Payback (years)'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
-                    realistic_display['Contractor Take'] = realistic_display['Contractor Take'].apply(lambda x: f"${x:,.0f}")
-                    realistic_display['Total CAPEX'] = realistic_display['Total CAPEX'].apply(lambda x: f"${x:,.0f}")
-                    realistic_display['Total OPEX'] = realistic_display['Total OPEX'].apply(lambda x: f"${x:,.0f}")
-                    
-                    st.dataframe(realistic_display, use_container_width=True, hide_index=True)
-                    
-                    # Navigation
-                    nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
-                    with nav_col1:
-                        if st.button("<< First", disabled=(realistic_page == 1), key="realistic_first", use_container_width=True):
-                            st.session_state.realistic_page = 1
-                            st.rerun()
-                    with nav_col2:
-                        if st.button("< Prev", disabled=(realistic_page == 1), key="realistic_prev", use_container_width=True):
-                            st.session_state.realistic_page = realistic_page - 1
-                            st.rerun()
-                    with nav_col3:
-                        if st.button("Next >", disabled=(realistic_page == realistic_pages), key="realistic_next", use_container_width=True):
-                            st.session_state.realistic_page = realistic_page + 1
-                            st.rerun()
-                    with nav_col4:
-                        if st.button("Last >>", disabled=(realistic_page == realistic_pages), key="realistic_last", use_container_width=True):
-                            st.session_state.realistic_page = realistic_pages
-                            st.rerun()
-                    
-                    # Show top scenario
-                    if realistic_page == 1:
-                        best_realistic = realistic_irr[0]
-                        st.success(f"""
-                        **BEST REALISTIC IRR SCENARIO: {best_realistic['scenario_name']}**
-                        
-                        Score: **{best_realistic['total_score']:.2f}/100** | NPV: **${best_realistic['npv']:,.0f}** | IRR: **{best_realistic['irr']*100:.2f}%** | Payback: **{best_realistic.get('payback_period', 0):.2f} years**
-                        """)
-                    
-                    # Export
-                    st.markdown("#### Export Realistic IRR Scenarios")
-                    realistic_export = []
-                    for r in realistic_irr:
-                        realistic_export.append({
-                            'Rank': r['filtered_rank'],
-                            'Score': r['total_score'],
-                            'Scenario': r['scenario_name'],
-                            'NPV': r['npv'],
-                            'IRR (%)': r['irr'] * 100,
-                            'Payback (years)': r.get('payback_period'),
-                            'Contractor Share': r['total_contractor_share'],
-                            'CAPEX': r['total_capex'],
-                            'OPEX': r['total_opex']
-                        })
-                    realistic_export_df = pd.DataFrame(realistic_export)
-                    csv_realistic = realistic_export_df.to_csv(index=False)
-                    st.download_button(
-                        f"Download All Realistic IRR Scenarios ({len(realistic_irr)} total) - CSV",
-                        csv_realistic,
-                        "realistic_irr_scenarios_15-30pct.csv",
-                        "text/csv",
-                        key="realistic_csv_download"
-                    )
-                else:
-                    st.warning("No scenarios found with IRR between 15% and 30%")
 
 def main():
     """Main application"""
