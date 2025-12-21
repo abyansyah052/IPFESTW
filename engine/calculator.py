@@ -234,11 +234,11 @@ class FinancialCalculator:
         Calculate Payback Period
         When cumulative cash flow becomes positive
         
-        Uses Excel formula: Payback = T + (-CCF_T / CCF_T+1)
+        Correct formula: Payback = T - (CCF_before / CF_current_year)
         Where:
-        - T = year number when CCF first becomes positive (1-indexed)
-        - CCF_T = cumulative CF of year before positive (negative value)
-        - CCF_T+1 = cumulative CF of first positive year
+        - T = year number when CCF first becomes positive (counting from year 1)
+        - CCF_before = cumulative CF at end of previous year (negative value)
+        - CF_current_year = cash flow in year T (positive)
         
         Args:
             results: List of calculation results
@@ -249,20 +249,24 @@ class FinancialCalculator:
         for i, result in enumerate(results):
             if result.cumulative_cash_flow >= 0:
                 if i == 0:
+                    # First year already positive - payback < 1 year
+                    if result.cash_flow > 0:
+                        return abs(result.cumulative_cash_flow - result.cash_flow) / result.cash_flow
                     return 1.0
                 
-                prev_cf = results[i-1].cumulative_cash_flow  # CCF_T (negative)
-                curr_cf = result.cumulative_cash_flow        # CCF_T+1 (positive)
+                prev_cumulative = results[i-1].cumulative_cash_flow  # Still negative
+                current_year_cf = result.cash_flow  # Annual CF this year
                 
-                if curr_cf == prev_cf:
-                    return float(i + 1)
+                if current_year_cf <= 0:
+                    return float(i + 1)  # Can't calculate fraction, return year number
                 
-                # Excel formula: T + (-CCF_T / CCF_T+1)
-                # T = i + 1 (1-indexed year number where CCF becomes positive)
-                # Fraction = -prev_cf / curr_cf (since prev_cf is negative, this gives positive fraction)
-                year_positive = i + 1  # Year number when first positive
-                fraction = -prev_cf / curr_cf
-                return float(year_positive) + fraction
+                # Payback = year - (remaining_debt / annual_cf)
+                # Example: Year 4, prev cumulative = -28M, current annual CF = +29M
+                # Fraction = 28M / 29M = 0.965 years into year 4
+                # Payback = 4 - 0.965 = 3.035 years
+                year_number = i + 1  # This is year 1, 2, 3, etc.
+                fraction_into_year = abs(prev_cumulative) / current_year_cf
+                return float(year_number) - fraction_into_year
         
         return None
     
