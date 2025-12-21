@@ -1115,6 +1115,141 @@ def compare_scenarios_page():
                     "text/csv",
                     key="lb_csv_download"
                 )
+            
+            # REALISTIC IRR RANKING (15-30%)
+            st.markdown("---")
+            st.markdown("### Realistic IRR Scenarios (15-30%)")
+            st.caption("Scenarios with realistic Internal Rate of Return between 15% and 30%, ranked by overall score")
+            
+            with get_session() as session:
+                # Get all scenarios
+                all_scenarios = session.query(Scenario.id).all()
+                all_ids = [s[0] for s in all_scenarios]
+                
+                # Rank all scenarios
+                comparator = ScenarioComparator(session)
+                all_ranked = comparator.rank_scenarios(all_ids)
+                
+                # Filter for IRR between 15-30% (0.15-0.30)
+                realistic_irr = [
+                    r for r in all_ranked 
+                    if r.get('irr') and 0.15 <= r['irr'] <= 0.30
+                ]
+                
+                if realistic_irr:
+                    # Re-rank within this filtered set
+                    for i, r in enumerate(realistic_irr, 1):
+                        r['filtered_rank'] = i
+                    
+                    st.info(f"Found **{len(realistic_irr)} scenarios** with IRR between 15% and 30%")
+                    
+                    # Pagination for realistic IRR
+                    realistic_per_page = 20
+                    realistic_total = len(realistic_irr)
+                    realistic_pages = max(1, (realistic_total - 1) // realistic_per_page + 1)
+                    
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        if 'realistic_page' not in st.session_state:
+                            st.session_state.realistic_page = 1
+                        
+                        realistic_page = st.selectbox(
+                            "Page",
+                            range(1, realistic_pages + 1),
+                            index=st.session_state.realistic_page - 1,
+                            format_func=lambda x: f"Page {x} of {realistic_pages} (showing {(x-1)*20+1}-{min(x*20, realistic_total)} of {realistic_total})",
+                            key="realistic_page_select"
+                        )
+                        st.session_state.realistic_page = realistic_page
+                    
+                    # Get page data
+                    start = (realistic_page - 1) * realistic_per_page
+                    end = start + realistic_per_page
+                    page_data = realistic_irr[start:end]
+                    
+                    # Build dataframe
+                    realistic_data = []
+                    for r in page_data:
+                        realistic_data.append({
+                            'Rank': r['filtered_rank'],
+                            'Scenario': r['scenario_name'],
+                            'Score': r['total_score'],
+                            'NPV (13%)': r['npv'],
+                            'IRR (%)': r['irr'] * 100,
+                            'Payback (years)': r.get('payback_period'),
+                            'Contractor Take': r['total_contractor_share'],
+                            'Total CAPEX': r['total_capex'],
+                            'Total OPEX': r['total_opex']
+                        })
+                    
+                    realistic_df = pd.DataFrame(realistic_data)
+                    
+                    # Format display
+                    realistic_display = realistic_df.copy()
+                    realistic_display['Score'] = realistic_display['Score'].apply(lambda x: f"{x:.2f}")
+                    realistic_display['NPV (13%)'] = realistic_display['NPV (13%)'].apply(lambda x: f"${x:,.0f}")
+                    realistic_display['IRR (%)'] = realistic_display['IRR (%)'].apply(lambda x: f"{x:.2f}%")
+                    realistic_display['Payback (years)'] = realistic_display['Payback (years)'].apply(lambda x: f"{x:.2f}" if pd.notna(x) else "N/A")
+                    realistic_display['Contractor Take'] = realistic_display['Contractor Take'].apply(lambda x: f"${x:,.0f}")
+                    realistic_display['Total CAPEX'] = realistic_display['Total CAPEX'].apply(lambda x: f"${x:,.0f}")
+                    realistic_display['Total OPEX'] = realistic_display['Total OPEX'].apply(lambda x: f"${x:,.0f}")
+                    
+                    st.dataframe(realistic_display, use_container_width=True, hide_index=True)
+                    
+                    # Navigation
+                    nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
+                    with nav_col1:
+                        if st.button("<< First", disabled=(realistic_page == 1), key="realistic_first", use_container_width=True):
+                            st.session_state.realistic_page = 1
+                            st.rerun()
+                    with nav_col2:
+                        if st.button("< Prev", disabled=(realistic_page == 1), key="realistic_prev", use_container_width=True):
+                            st.session_state.realistic_page = realistic_page - 1
+                            st.rerun()
+                    with nav_col3:
+                        if st.button("Next >", disabled=(realistic_page == realistic_pages), key="realistic_next", use_container_width=True):
+                            st.session_state.realistic_page = realistic_page + 1
+                            st.rerun()
+                    with nav_col4:
+                        if st.button("Last >>", disabled=(realistic_page == realistic_pages), key="realistic_last", use_container_width=True):
+                            st.session_state.realistic_page = realistic_pages
+                            st.rerun()
+                    
+                    # Show top scenario
+                    if realistic_page == 1:
+                        best_realistic = realistic_irr[0]
+                        st.success(f"""
+                        **BEST REALISTIC IRR SCENARIO: {best_realistic['scenario_name']}**
+                        
+                        Score: **{best_realistic['total_score']:.2f}/100** | NPV: **${best_realistic['npv']:,.0f}** | IRR: **{best_realistic['irr']*100:.2f}%** | Payback: **{best_realistic.get('payback_period', 0):.2f} years**
+                        """)
+                    
+                    # Export
+                    st.markdown("#### Export Realistic IRR Scenarios")
+                    realistic_export = []
+                    for r in realistic_irr:
+                        realistic_export.append({
+                            'Rank': r['filtered_rank'],
+                            'Score': r['total_score'],
+                            'Scenario': r['scenario_name'],
+                            'NPV': r['npv'],
+                            'IRR (%)': r['irr'] * 100,
+                            'Payback (years)': r.get('payback_period'),
+                            'Contractor Share': r['total_contractor_share'],
+                            'CAPEX': r['total_capex'],
+                            'OPEX': r['total_opex']
+                        })
+                    realistic_export_df = pd.DataFrame(realistic_export)
+                    csv_realistic = realistic_export_df.to_csv(index=False)
+                    st.download_button(
+                        f"Download All Realistic IRR Scenarios ({len(realistic_irr)} total) - CSV",
+                        csv_realistic,
+                        "realistic_irr_scenarios_15-30pct.csv",
+                        "text/csv",
+                        key="realistic_csv_download"
+                    )
+                else:
+                    st.warning("No scenarios found with IRR between 15% and 30%")
 
 def main():
     """Main application"""
