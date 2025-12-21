@@ -765,11 +765,13 @@ def compare_scenarios_page():
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 best_npv = df.loc[df['NPV (13%)'].idxmax()]
-                st.metric("Best NPV", f"${best_npv['NPV (13%)']:,.0f}", f"ID: {int(best_npv['ID'])}")
+                scenario_name = best_npv['Scenario'][:20] + '...' if len(best_npv['Scenario']) > 20 else best_npv['Scenario']
+                st.metric("Best NPV", f"${best_npv['NPV (13%)']:,.0f}", scenario_name)
             with col2:
                 if df['IRR (%)'].notna().any():
                     best_irr = df.loc[df['IRR (%)'].idxmax()]
-                    st.metric("Best IRR", f"{best_irr['IRR (%)']:.2f}%", f"ID: {int(best_irr['ID'])}")
+                    scenario_name = best_irr['Scenario'][:20] + '...' if len(best_irr['Scenario']) > 20 else best_irr['Scenario']
+                    st.metric("Best IRR", f"{best_irr['IRR (%)']:.2f}%", scenario_name)
                 else:
                     st.metric("Best IRR", "N/A")
             with col3:
@@ -828,22 +830,28 @@ def compare_scenarios_page():
             total_pages = max(1, (total_items - 1) // items_per_page + 1)
             
             # Page selector
+            if 'detail_page' not in st.session_state:
+                st.session_state.detail_page = 1
+            
+            # Ensure page is within bounds
+            st.session_state.detail_page = max(1, min(st.session_state.detail_page, total_pages))
+            
             col1, col2, col3 = st.columns([1, 2, 1])
             with col2:
-                if 'detail_page' not in st.session_state:
-                    st.session_state.detail_page = 1
-                
                 page_num = st.selectbox(
                     "Page",
                     range(1, total_pages + 1),
-                    index=min(st.session_state.detail_page - 1, total_pages - 1),
+                    index=st.session_state.detail_page - 1,
                     format_func=lambda x: f"Page {x} of {total_pages} (showing {(x-1)*10+1}-{min(x*10, total_items)} of {total_items})",
                     key="detail_page_select"
                 )
-                st.session_state.detail_page = page_num
+                # Sync selectbox value to session state
+                if page_num != st.session_state.detail_page:
+                    st.session_state.detail_page = page_num
             
-            # Get current page
-            start_idx = (page_num - 1) * items_per_page
+            # Get current page using session state
+            current_page = st.session_state.detail_page
+            start_idx = (current_page - 1) * items_per_page
             end_idx = start_idx + items_per_page
             df_page = df_sorted.iloc[start_idx:end_idx].copy()
             
@@ -862,21 +870,21 @@ def compare_scenarios_page():
             st.dataframe(df_display, use_container_width=True, hide_index=True)
             
             # Navigation buttons
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                if st.button("<< First", disabled=(page_num == 1), key="detail_first"):
+            nav_col1, nav_col2, nav_col3, nav_col4 = st.columns(4)
+            with nav_col1:
+                if st.button("<< First", disabled=(st.session_state.detail_page == 1), key="detail_first", use_container_width=True):
                     st.session_state.detail_page = 1
                     st.rerun()
-            with col2:
-                if st.button("< Prev", disabled=(page_num == 1), key="detail_prev"):
-                    st.session_state.detail_page = page_num - 1
+            with nav_col2:
+                if st.button("< Prev", disabled=(st.session_state.detail_page == 1), key="detail_prev", use_container_width=True):
+                    st.session_state.detail_page = st.session_state.detail_page - 1
                     st.rerun()
-            with col3:
-                if st.button("Next >", disabled=(page_num == total_pages), key="detail_next"):
-                    st.session_state.detail_page = page_num + 1
+            with nav_col3:
+                if st.button("Next >", disabled=(st.session_state.detail_page == total_pages), key="detail_next", use_container_width=True):
+                    st.session_state.detail_page = st.session_state.detail_page + 1
                     st.rerun()
-            with col4:
-                if st.button("Last >>", disabled=(page_num == total_pages), key="detail_last"):
+            with nav_col4:
+                if st.button("Last >>", disabled=(st.session_state.detail_page == total_pages), key="detail_last", use_container_width=True):
                     st.session_state.detail_page = total_pages
                     st.rerun()
             
