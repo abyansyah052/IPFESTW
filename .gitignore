@@ -20,3 +20,9 @@ logs/
 
 # Test
 *.log
+
+# Documentation (internal use only)
+docs/
+
+# Testing files (not part of application architecture)
+_testing/
