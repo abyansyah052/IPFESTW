@@ -1,8 +1,13 @@
 # Environment
 .env
+.env.example
 venv/
 __pycache__/
 *.pyc
+
+# Data files
+512_scenarios.xlsx
+requirements.txt
 
 # Streamlit secrets (local)
 .streamlit/secrets.toml
