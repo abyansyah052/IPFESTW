@@ -529,7 +529,7 @@ Untuk pertanyaan atau issues:
 - Supabase untuk PostgreSQL database hosting
 - NumPy Financial untuk NPV/IRR calculations
 - Excel formula references untuk validation
-
+- Built with helps of AI in certain part but the logic is our own calculation
 ---
 
 **Version:** 2.0.0  
